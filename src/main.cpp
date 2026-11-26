@@ -400,8 +400,7 @@ std::optional<WindowsRom> runGb(HWND window, fs::path rom, std::vector<char> rom
             else {unsigned bits=(pressed[Up]?64:0)|(pressed[Down]?128:0)|(pressed[Left]?32:0)|(pressed[Right]?16:0)|(pressed[Confirm]?1:0)|(pressed[Cancel]?2:0)|(pressed[FloorUp]?256:0)|(pressed[FloorDown]?512:0);
                 if(dungeonMap.key(bits)) {
                     if(!dungeonMap.inDungeon(*gb))notice(L"現在の状態では移動できません");
-                    else if(MessageBoxW(window,L"スロット1に保存して移動しますか？",L"WizPlayer",
-                                        MB_YESNO|MB_DEFBUTTON2)==IDYES&&stateAction(1,false)) {
+                    else if(stateAction(1,false)) {
                         input.value=0;
                         auto frame=pixels;
                         if(moveDungeonMapAfterBackup(dungeonMap,*gb,[&] {

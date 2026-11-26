@@ -640,9 +640,7 @@ std::optional<WindowsRom> runConsole(HWND window, const fs::path& rom, std::vect
                         const unsigned keys=(pressed[Confirm]?1:0)|(pressed[Right]?16:0)|
                             (pressed[Left]?32:0)|(pressed[Up]?64:0)|(pressed[Down]?128:0)|
                             (pressed[FloorUp]?256:0)|(pressed[FloorDown]?512:0);
-                        if(sfc->mapKey(keys)&&
-                           MessageBoxW(window,L"スロット1に保存して移動しますか？",L"WizPlayer",
-                                       MB_YESNO|MB_DEFBUTTON2)==IDYES) {
+                        if(sfc->mapKey(keys)) {
                             if(accessState(1,false)&&sfc->moveMap()) {
                                 overlay=Overlay::Game;
                                 releaseGame=true;
@@ -657,9 +655,7 @@ std::optional<WindowsRom> runConsole(HWND window, const fs::path& rom, std::vect
                         if (pressed[Right]) targetX = (targetX + 1) % 20;
                         if (pressed[Up]) targetY = (targetY + 1) % 20;
                         if (pressed[Down]) targetY = (targetY + 19) % 20;
-                        if(pressed[Confirm]&&
-                           MessageBoxW(window,L"スロット1に保存して移動しますか？",L"WizPlayer",
-                                       MB_YESNO|MB_DEFBUTTON2)==IDYES) {
+                        if(pressed[Confirm]) {
                             if (accessState(1,false)&&wiiz_core_map_warp(core.get(), floor, targetX, targetY)) {
                                 overlay = Overlay::Game;
                                 releaseGame = true;
