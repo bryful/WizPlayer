@@ -14,6 +14,7 @@
 #include <cstring>
 #include <algorithm>
 #include "windows_shell.h"
+#include "windows_resources.h"
 #include "game.h"
 #include "game_support.h"
 #include "turbo_runner.h"
@@ -603,7 +604,7 @@ int wmain(int argc, wchar_t** argv) try {
     windowClass.lpfnWndProc = windowProc;
     windowClass.hInstance = GetModuleHandleW(nullptr);
     windowClass.lpszClassName = L"WizPlayer";
-    windowClass.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+    windowClass.hIcon = LoadIconW(windowClass.hInstance, MAKEINTRESOURCEW(IDI_WIZPLAYER));
     windowClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
     if (!RegisterClassW(&windowClass)) throw std::runtime_error("Window registration failed");
     const auto menu = CreateMenu();
