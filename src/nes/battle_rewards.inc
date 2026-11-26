@@ -1,0 +1,244 @@
+// 既知の日本語版ROMに限定した補助機能。設定はステートと独立。
+static int reward_factor(unsigned value)
+{
+    return value==1 || value==4 || value==8 || value==16 || value==32 ||
+        value==64 || value==128 || value==256;
+}
+int wiiz_core_wizardry_rewards_supported(const WiizCore* core)
+{
+    if (core->map_profile < 1 || core->map_profile > 3 || core->e->ci.prg8k_banks != 16) return 0;
+    static const unsigned dividers[] = {0xf049, 0xfb92, 0xe0e7};
+    static const unsigned experience_calls[] = {0xe5b8, 0x8418, 0x842b};
+    static const unsigned gold_calls[] = {0xea94, 0x8af2, 0x8a24};
+    const unsigned index = core->map_profile - 1;
+    const unsigned divider = dividers[index];
+    const unsigned experience_bank = index ? 12 : 15;
+    const unsigned gold_bank = index ? 7 : 15;
+    const uint8_t* prg = core->e->ci.prg_data;
+    const uint8_t call[] = {0x20, (uint8_t)divider, (uint8_t)(divider >> 8), 0xa2, 0x05, 0xb5};
+    const uint8_t division_start[] = {0x86, index ? 0x0b : 0x00, 0x85, index ? 0x0a : 0x01};
+    return !memcmp(prg + 15*8192 + (divider&8191) + 2, division_start, sizeof(division_start)) &&
+           !memcmp(prg + experience_bank*8192 + (experience_calls[index]&8191) - 2, call, sizeof(call)) &&
+           !memcmp(prg + gold_bank*8192 + (gold_calls[index]&8191) - 2, call, sizeof(call));
+}
+static void multiply_battle_reward(WiizCore* core, unsigned pc, unsigned bank, unsigned addr) {
+    if (core->wizardry_audio_role == 2 || (core->reward_exp <= 1 && core->reward_gold <= 1)) return;
+    Emulator* e = core->e;
+    unsigned reward_addr, experience_call, experience_bank, gold_call, gold_bank;
+    switch (core->map_profile) {
+    case 1:
+        if (bank != 15 || pc != 0xf04d || addr != 0x00) return;
+        reward_addr = 0x0a;
+        experience_call = 0xe5b8; experience_bank = 15;
+        gold_call = 0xea94; gold_bank = 15;
+        break;
+    case 2:
+        if (bank != 15 || pc != 0xfb96 || addr != 0x0b) return;
+        reward_addr = 0x2a;
+        experience_call = 0x8418; experience_bank = 12;
+        gold_call = 0x8af2; gold_bank = 7;
+        break;
+    case 3:
+        if (bank != 15 || pc != 0xe0eb || addr != 0x0b) return;
+        reward_addr = 0x2a;
+        experience_call = 0x842b; experience_bank = 12;
+        gold_call = 0x8a24; gold_bank = 7;
+        break;
+    default:
+        return;
+    }
+    // The shared BCD divider is also used outside battle. Match its JSR caller.
+    uint8_t* ram = e->s.c.ram;
+    const unsigned sp = e->s.c.S;
+    const unsigned caller = ram[0x100 + ((sp + 1) & 255)] |
+                            (ram[0x100 + ((sp + 2) & 255)] << 8);
+    if (caller != experience_call && caller != gold_call) return;
+    const unsigned caller_bank = e->s.m.prg8k_bank[(caller - 0x8000) / 8192] & (e->ci.prg8k_banks - 1);
+    const bool experience = caller == experience_call;
+    if (caller_bank != (experience ? experience_bank : gold_bank)) return;
+    const unsigned multiplier = experience ? core->reward_exp : core->reward_gold;
+    if (multiplier <= 1) return;
+    uint64_t reward = 0;
+    for (unsigned i = 0; i < 6; ++i) {
+        const unsigned byte = ram[reward_addr + i];
+        if ((byte >> 4) > 9 || (byte & 15) > 9) return;
+        reward = reward * 100 + (byte >> 4) * 10 + (byte & 15);
+    }
+    reward *= multiplier;
+    if (reward > 999999999999ULL) reward = 999999999999ULL;
+    for (unsigned i = 6; i > 0; --i) {
+        ram[reward_addr + i - 1] = (uint8_t)(((reward / 10) % 10) * 16 + reward % 10);
+        reward /= 100;
+    }
+}
+static unsigned assist_game(const WiizCore* core)
+{
+    return core->reward_profile?core->reward_profile:core->profile;
+}
+unsigned wiiz_core_ff_options(const WiizCore* core)
+{
+    return assist_game(core)==122?3:assist_game(core)==123?5:0;
+}
+int wiiz_core_max_skills(WiizCore* core,unsigned enabled)
+{
+    if(enabled>1 || (enabled && !(wiiz_core_ff_options(core)&1)))return 0;
+    core->max_skills=enabled;return 1;
+}
+int wiiz_core_free_jobs(WiizCore* core,unsigned enabled)
+{
+    if(enabled>1 || (enabled && assist_game(core)!=123))return 0;
+    core->free_jobs=enabled;return 1;
+}
+// 原作の表・ROM・キャパシティ残高は保ち、判定と消費の読取値だけを0にする。
+static uint8_t ff3_job_read(Emulator* e,uint16_t addr)
+{
+    WiizCore* core=e->ram_write_user_data;
+    const uint8_t value=core->prg_ram_read(e,addr);
+    if(core->free_jobs && core->sound_role!=2 && assist_game(core)==123 &&
+       e->s.m.prg8k_bank[1]==0x3d && e->s.c.X<23 && addr==0x7200+e->s.c.X &&
+       ((e->s.c.PC.val==0xae56 && e->s.c.opcode==0xdd) ||
+        (e->s.c.PC.val==0xab9b && e->s.c.opcode==0xfd)))return 0;
+    return value;
+}
+static uint8_t ff2_magic_read(Emulator* e,uint16_t addr,uint8_t value,void* userdata)
+{
+    const WiizCore* core=userdata;
+    if(assist_game(core)!=122 || core->sound_role==2)return value;
+    const unsigned pc=e->s.c.PC.val;
+    const unsigned opcode=e->s.c.opcode;
+    if(e->s.m.prg8k_bank[0]==0x18 && pc==0x9e2a && opcode==0xe5 && addr==0x77)return 0;
+    if(e->s.m.prg8k_bank[1]==0x19 && pc==0xa965 && opcode==0xf1)
+    {
+        // The four party spell levels are in the battle records at $7D7A + $30 * slot.
+        if(addr>=0x7d9f && addr<=0x7e2f && (addr-0x7d9f)%0x30==0)return 0;
+    }
+    if(e->s.m.prg8k_bank[1]==0x1d && addr>=0x6210 && addr<=0x62ee &&
+       ((addr-0x6210)&0x3f)<0x20 && !(addr&1))
+    {
+        // The field check adds one to the stored level before comparing.
+        if(pc==0xab61 && opcode==0xb9)return 0xff;
+        if(pc==0xac98 && opcode==0xf9)
+        {
+            // The original CLC accounts for the level being stored zero-based.
+            e->s.c.C=true;
+            return 0;
+        }
+    }
+    return value;
+}
+int wiiz_core_free_magic(WiizCore* core,unsigned enabled)
+{
+    if(enabled>1 || (enabled && assist_game(core)!=122))return 0;
+    core->free_magic=enabled;
+    core->e->cpu_ram_read_filter=enabled?ff2_magic_read:NULL;
+    return 1;
+}
+int wiiz_core_reward_supported(const WiizCore* core,int gold)
+{
+    if(core->map_profile)return wiiz_core_wizardry_rewards_supported(core);
+    const unsigned profile=core->reward_profile?core->reward_profile:core->profile;
+    return profile==3 || profile==4 || profile==123 || (profile==122 && gold);
+}
+
+int wiiz_core_rewards(WiizCore* core,unsigned experience,unsigned gold)
+{
+    if (core->map_profile) {
+        if (!experience || experience > 256 || (experience & (experience - 1)) ||
+            !gold || gold > 256 || (gold & (gold - 1))) return 0;
+        if ((experience > 1 || gold > 1) && !wiiz_core_wizardry_rewards_supported(core)) return 0;
+        core->reward_exp = experience;
+        core->reward_gold = gold;
+        return 1;
+    }
+    if(!reward_factor(experience) || !reward_factor(gold))return 0;
+    if((experience!=1 && !wiiz_core_reward_supported(core,0)) ||
+       (gold!=1 && !wiiz_core_reward_supported(core,1)))return 0;
+    core->reward_exp=experience;core->reward_gold=gold;return 1;
+}
+static unsigned reward_read(Emulator* e,unsigned addr,unsigned size)
+{
+    unsigned result=0;
+    for(unsigned i=0;i<size;++i)
+        result|=(unsigned)(addr<0x800?e->s.c.ram[addr+i]:e->s.c.prg_ram[addr+i-0x6000])<<(8*i);
+    return result;
+}
+static void reward_write(Emulator* e,unsigned addr,unsigned size,unsigned value)
+{
+    for(unsigned i=0;i<size;++i)
+    {
+        if(addr<0x800)e->s.c.ram[addr+i]=(uint8_t)(value>>(8*i));
+        else e->s.c.prg_ram[addr+i-0x6000]=(uint8_t)(value>>(8*i));
+    }
+}
+static unsigned reward_scale(Emulator* e,unsigned addr,unsigned size,unsigned factor,unsigned limit)
+{
+    const unsigned original=reward_read(e,addr,size);
+    const uint64_t product=(uint64_t)original*(factor?factor:1);
+    const unsigned result=product>limit?limit:(unsigned)product;
+    reward_write(e,addr,size,result);return result;
+}
+static int battle_rewards(WiizCore* core,unsigned addr,unsigned value)
+{
+    if(core->sound_role==2 || (!core->free_magic && !core->max_skills && core->reward_exp<=1 && core->reward_gold<=1))return 0;
+    const unsigned profile=assist_game(core);
+    Emulator* e=core->e;
+    const unsigned pc=e->s.c.PC.val;
+    const unsigned bank=pc>=0x8000?e->s.m.prg8k_bank[(pc-0x8000)/8192]:~0u;
+    if(core->free_magic && profile==122 && bank==0x18 && pc==0x9f1f && e->s.c.opcode==0x86 && addr==0x62)
+    {
+        e->s.c.ram[addr]=0;
+        return 1;
+    }
+    // 最後のキャラクターの成長処理が完了したINCの確定書込だけで反映する。
+    if(core->max_skills && value==4 && profile==122 && bank/2==5 && pc==0xa7df && addr==0x9e)
+    {
+        for(unsigned character=0;character<4;++character)
+        {
+            const unsigned offset=character*0x40;
+            for(unsigned weapon=0;weapon<8;++weapon)
+                reward_write(e,0x6200+offset+weapon*2,2,15);
+            for(unsigned spell=0;spell<16;++spell)
+                if(reward_read(e,0x6130+offset+spell,1))
+                    reward_write(e,0x6210+offset+spell*2,2,15);
+        }
+    }
+    if(core->max_skills && value==4 && profile==123 && bank==0x35 && pc==0xbf72 && addr==0x52)
+    {
+        for(unsigned character=0;character<4;++character)
+            reward_write(e,0x6110+character*0x40,2,98);
+    }
+    if(profile==122 && bank/2==5 && pc==0xa4ce && addr==0x62 && core->reward_gold>1)
+    {
+        const unsigned amount=reward_scale(e,0x7cc0,2,core->reward_gold,65535);
+        e->s.c.A=(uint8_t)amount;e->s.c.ram[addr]=(uint8_t)amount;return 1;
+    }
+    if(profile==3 && bank/2==1)
+    {
+        // 生存者への分配後、メッセージと各人への加算に同じ値を渡す。
+        if(pc==0xbd6b && addr==4 && core->reward_exp>1)
+            reward_scale(e,0x5d,2,core->reward_exp,65535);
+        if(pc==0xbe8c && addr==0x63f && core->reward_gold>1)
+        {
+            const unsigned amount=reward_scale(e,0x60,2,core->reward_gold,65535);
+            e->s.c.A=(uint8_t)amount;e->s.c.ram[addr]=(uint8_t)amount;return 1;
+        }
+    }
+    if(profile==4 && bank/2==18)
+    {
+        unsigned amount;
+        if(pc==0x87ff && addr==0xfd && core->reward_exp>1)
+            // 累積経験値の上限9,999,999との加算でも24ビットが循環しない範囲。
+            amount=reward_scale(e,0x7203,3,core->reward_exp,0xffffff-9999999);
+        else if(pc==0x8869 && addr==0x6f && core->reward_gold>1)
+            amount=reward_scale(e,0x7201,2,core->reward_gold,65535);
+        else return 0;
+        e->s.c.A=(uint8_t)amount;e->s.c.ram[addr]=(uint8_t)amount;return 1;
+    }
+    if(profile==123 && bank==0x35 && pc==0xbcfc && addr==0x7570 && value==4)
+    {
+        // 原作の人数割り・端数処理を保ち、報酬表示の16ビット上限で飽和。
+        if(core->reward_exp>1)reward_scale(e,0x7424,3,core->reward_exp,65535);
+        if(core->reward_gold>1)reward_scale(e,0x7427,3,core->reward_gold,65535);
+    }
+    return 0;
+}

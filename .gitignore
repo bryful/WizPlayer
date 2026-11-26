@@ -1,0 +1,33 @@
+# ローカルのゲームデータ
+.rom/
+/.patch/
+/rom/
+/save/
+/state/
+/settings/
+*.nes
+*.fc
+*.ips
+*.gb
+*.gbc
+*.sfc
+*.smc
+
+# ビルド成果物とローカル設定
+/.vs/
+/build/
+/.gradle/
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/app/.cxx/
+/android/local.properties
+*.pdb
+.env
+.env.local
+
+# Android署名情報
+*.jks
+*.keystore
+keystore.properties
+signing.properties

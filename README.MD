@@ -1,0 +1,9 @@
+# WizPlayer
+
+Androidを主対象に、FC・GB/GBC・SFC向けの対象RPGを遊ぶためのエミュレータープレイヤーです。ゲームROMは付属しません。
+
+## ライセンス
+
+GBWizから移植した独自コードはMITライセンスです。[LICENSE](LICENSE)
+
+GB/GBC版にはGambatte（GPL-2.0-only）、blipper（MIT）、Windows版にはSDL2（zlib）を使用します。出典、著作権表示、対応ソースの情報は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
