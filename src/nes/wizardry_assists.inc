@@ -42,7 +42,8 @@ int wiiz_core_set_wizardry_assist(WiizCore* core,unsigned bit,int enabled)
         const bool first=core->map_profile==1;
         uint8_t* code=core->e->ci.prg_data+offsets[core->map_profile-1];
         const uint8_t original[]={first?0x25:0xd0,first?0x0f:0x06};
-        const uint8_t mixed[]={first?0xa9:0xea,0xea};
+        // FC I returns zero for an eligible candidate. II/III skip the reject branch.
+        const uint8_t mixed[]={first?0xa9:0xea,first?0x00:0xea};
         if(memcmp(code,original,2) && memcmp(code,mixed,2))return 0;
         memcpy(code,enabled?mixed:original,2);
     }
