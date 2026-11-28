@@ -492,6 +492,30 @@ extern "C" JNIEXPORT jobjectArray JNICALL Java_jp_gbwiz_NativeCore_spellNames(JN
         for(const auto& character:s.turbo.spells().characters(*s.core)){auto name=env->NewStringUTF(character.name.c_str());env->SetObjectArrayElement(names,character.slot,name);env->DeleteLocalRef(name);}return names;
     }catch(const std::exception& e){error(env,e.what());return nullptr;}
 }
+extern "C" JNIEXPORT jboolean JNICALL Java_jp_gbwiz_NativeCore_rosterEditable(JNIEnv*,jclass,jlong h) {
+    auto& s=get(h);
+    if(!s.wizardry)return false;
+    wiiz_core_input(s.nes.get(),0);
+    return wiiz_core_items_pause(s.nes.get());
+}
+extern "C" JNIEXPORT jbyteArray JNICALL Java_jp_gbwiz_NativeCore_reorderRoster(JNIEnv* env,jclass,jlong h,jint from,jint to) {
+    auto& s=get(h);
+    std::array<uint8_t,8192> ram;
+    if(!s.wizardry||!wiiz_core_roster_move(s.nes.get(),from,to,ram.data(),ram.size()))return nullptr;
+    return array(env,ram.data(),ram.size());
+}
+extern "C" JNIEXPORT jboolean JNICALL Java_jp_gbwiz_NativeCore_applyRoster(JNIEnv* env,jclass,jlong h,jbyteArray data) {
+    try {
+        auto& s=get(h);
+        if(!s.wizardry||env->GetArrayLength(data)!=8192||!wiiz_core_items_pause(s.nes.get()))return false;
+        std::array<uint8_t,8192> ram;
+        env->GetByteArrayRegion(data,0,ram.size(),reinterpret_cast<jbyte*>(ram.data()));
+        if(env->ExceptionCheck()||!wiiz_core_sram_write(s.nes.get(),ram.data(),ram.size()))return false;
+        s.nesTurbo->reset(true);
+        s.nesAudioPhase=0;
+        return true;
+    } catch(const std::exception& e){error(env,e.what());return false;}
+}
 extern "C" JNIEXPORT jboolean JNICALL Java_jp_gbwiz_NativeCore_learnSpells(JNIEnv*,jclass,jlong h,jint slot){
     auto& s=get(h);
 #ifdef WIZPLAYER_SFC

@@ -11,6 +11,7 @@ void wiiz_core_delete(WiizCore*);
 void wiiz_core_input(WiizCore*, unsigned buttons);
 void wiiz_core_reset(WiizCore*);
 unsigned wiiz_core_title_ready(WiizCore*);
+int wiiz_core_roster_move(WiizCore*,unsigned from,unsigned to,uint8_t* bytes,size_t size);
 int wiiz_core_frame(WiizCore*);
 void wiiz_core_pixels(WiizCore*, uint32_t* rgba);
 const float* wiiz_core_audio(WiizCore*, size_t* count);

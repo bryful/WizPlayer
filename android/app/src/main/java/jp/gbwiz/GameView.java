@@ -41,12 +41,15 @@ final class GameView extends View {
     int experienceMultiplier=1,goldMultiplier=1;
     String navigationHint="上下:選択  左右:変更  A:決定  B:戻る";
     String[] browserItems;
+    String[] rosterNames;
+    boolean rosterSupported;
+    int rosterRow,rosterFrom=-1;
     String[] spellCharacters;
     int spellRow;
     int browserRow;
     private RectF menuBox;
     int supportRowCount(){
-        return gameOptionsSupported==0?12:3+Integer.bitCount(gameOptionsSupported);
+        return gameOptionsSupported==0?(rosterSupported?13:12):3+Integer.bitCount(gameOptionsSupported);
     }
     int gameOptionBit(int row){
         int options=gameOptionsSupported;
@@ -77,6 +80,21 @@ final class GameView extends View {
         rows[9]=effectRow("常時 保護",2);
         rows[10]=effectRow("常時 識別",4);
         rows[11]=effectRow("常時 浮遊",8);
+        if(rosterSupported)rows[12]="名簿の並べ替え";
+        return rows;
+    }
+    private String[] rosterRows(){
+        String[] rows=new String[rosterNames.length];
+        for(int i=0;i<rows.length;i++){
+            int source=i;
+            if(rosterFrom>=0){
+                if(i==rosterRow)source=rosterFrom;
+                else if(rosterFrom<=i&&i<rosterRow)source=i+1;
+                else if(rosterRow<i&&i<=rosterFrom)source=i-1;
+            }
+            rows[i]=(i==rosterRow&&rosterFrom>=0?"* ":"")+(i+1)+"  "+
+                (rosterNames[source]==null?"空き":rosterNames[source]);
+        }
         return rows;
     }
     private String effectRow(String label,int bit){
@@ -127,7 +145,7 @@ final class GameView extends View {
         menuPaint.setColor(color);menuPaint.setTypeface(Typeface.create("sans-serif",Typeface.BOLD));
         menuPaint.setTextAlign(Paint.Align.CENTER);menuPaint.setTextSize(size);
         int marker=label.indexOf("@ROM:");
-        if(marker>=0&&(characterMenu||spellCharacters!=null)) {
+        if(marker>=0&&(characterMenu||spellCharacters!=null||rosterNames!=null)) {
             int start=marker+5,end=start;
             while(end<label.length()&&Character.digit(label.charAt(end),16)>=0)end++;
             int count=(end-start)/16;
@@ -253,13 +271,13 @@ final class GameView extends View {
         menuBox=new RectF(screen.left+screen.width()*.025f,screen.top+screen.height()*.035f,screen.right-screen.width()*.025f,screen.bottom-screen.height()*.035f);
         paint.setColor(0xff080c12);c.drawRect(menuBox,paint);
         paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(2);paint.setColor(0xffaab8c8);c.drawRect(menuBox,paint);paint.setStyle(Paint.Style.FILL);
-        String[] items=browserItems!=null?browserItems:spellCharacters;
+        String[] items=browserItems!=null?browserItems:rosterNames!=null?rosterRows():spellCharacters;
         int visibleRows=items!=null?7:characterMenu?characterRowCount():supportMenu?supportRowCount():MENU_ROWS;
         float header=menuBox.height()*.13f;rowHeight=menuBox.height()*.735f/visibleRows;rowTop=menuBox.top+header;
-        menuText(c,browserItems!=null?"ROM選択":spellCharacters!=null?"対象キャラクター選択":characterMenu?"キャラクター編集":supportMenu?"サポート":"機能メニュー",new RectF(menuBox.left,menuBox.top,menuBox.right,rowTop),0xfff0f2f5,header*.46f);
+        menuText(c,browserItems!=null?"ROM選択":rosterNames!=null?"名簿の並べ替え":spellCharacters!=null?"対象キャラクター選択":characterMenu?"キャラクター編集":supportMenu?"サポート":"機能メニュー",new RectF(menuBox.left,menuBox.top,menuBox.right,rowTop),0xfff0f2f5,header*.46f);
         String speed=speedHalf%2==0?Integer.toString(speedHalf/2):"1.5";
         String[] rows=items!=null?items:characterMenu?characterRows():supportMenu?supportRows():new String[]{"スロット   ‹  "+slot+" / 5  ›","ステート保存","ステート読込","再開","A / B 入替   ‹  "+(swap?"ON":"OFF")+"  ›","ROM選択","リセット","ロゴスキップ   ‹  "+(skipLogo?"ON":"OFF")+"  ›","速度   ‹  "+speed+"倍  ›  音声1倍","サポート","X / Y 入替   ‹  "+(swapXY?"ON":"OFF")+"  ›","ブラウン管   ‹  "+CRT_MODES[crtMode]+"  ›"};
-        int selected=browserItems!=null?browserRow:spellCharacters!=null?spellRow:menuRow,first=items!=null?(selected/7)*7:0;
+        int selected=browserItems!=null?browserRow:rosterNames!=null?rosterRow:spellCharacters!=null?spellRow:menuRow,first=items!=null?(selected/7)*7:0;
         // Use the main menu's font size in every submenu. Row spacing may
         // grow for shorter lists, but font size never depends on row count,
         // label length, ROM capabilities or the selection marker.
@@ -269,7 +287,9 @@ final class GameView extends View {
             if(first+i==selected){paint.setColor(0xff2c3c51);c.drawRect(r,paint);}
             menuText(c,(first+i==selected?"›  ":"")+rows[first+i],r,first+i==selected?0xffffdc83:0xffe0e6ee,itemTextSize);
         }
-        menuText(c,spellCharacters!=null?"上下:選択  A:決定  B:戻る":characterMenu?"上下:選択  左右:変更  A:実行  B:戻る":navigationHint,new RectF(menuBox.left,rowTop+visibleRows*rowHeight,menuBox.right,menuBox.bottom),0xffa7b4c5,menuBox.height()*.135f*.3f);
+        String hint=rosterNames!=null?(rosterFrom>=0?"A:保存してタイトルへ  B:取消":"上下:選択  A:つかむ  B:戻る"):
+            spellCharacters!=null?"上下:選択  A:決定  B:戻る":characterMenu?"上下:選択  左右:変更  A:実行  B:戻る":navigationHint;
+        menuText(c,hint,new RectF(menuBox.left,rowTop+visibleRows*rowHeight,menuBox.right,menuBox.bottom),0xffa7b4c5,menuBox.height()*.135f*.3f);
     }
     private int itemCanvasHeight(){return frame.getWidth()==256?240:frame.getHeight();}
     @Override public boolean onTouchEvent(MotionEvent event) {
@@ -285,10 +305,10 @@ final class GameView extends View {
         if(blocked)return true;
         if((menu||browserItems!=null||spellCharacters!=null)&&type==MotionEvent.ACTION_DOWN&&menuBox!=null&&menuBox.contains(event.getX(),event.getY())) {
             int row=(int)((event.getY()-rowTop)/rowHeight);
-            String[] items=browserItems!=null?browserItems:spellCharacters;
+            String[] items=browserItems!=null?browserItems:rosterNames!=null?rosterNames:spellCharacters;
             if(event.getY()>=rowTop&&row>=0&&row<(items!=null?7:characterMenu?characterRowCount():supportMenu?supportRowCount():MENU_ROWS)) {
-                int adjust=items==null&&(characterMenu?row>=2:supportMenu?(gameOptionsSupported!=0?row>=1:(row>=1&&row<=3)||row==5||row==6||row>=8):(row==0||row==4||row==7||row==8||row==10))?(event.getX()<menuBox.centerX()?-1:1):0;
-                int selected=browserItems!=null?browserRow:spellRow,index=items==null?row:(selected/7)*7+row;
+                int adjust=items==null&&(characterMenu?row>=2:supportMenu?(gameOptionsSupported!=0?row>=1:(row>=1&&row<=3)||row==5||row==6||(row>=8&&row<12)):(row==0||row==4||row==7||row==8||row==10))?(event.getX()<menuBox.centerX()?-1:1):0;
+                int selected=browserItems!=null?browserRow:rosterNames!=null?rosterRow:spellRow,index=items==null?row:(selected/7)*7+row;
                 if(items==null||index<items.length)actions.menuItem(index,adjust);blocked=true;
             }
             return true;

@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include "ff2_harness.h"
 #include "ff3_harness.h"
-struct WiizCore { Emulator* e; unsigned buttons; float audio[4096]; size_t audio_count; unsigned sound_commands[3]; int sound_role; unsigned roster_editable,title_ready;
+struct WiizCore { Emulator* e; unsigned buttons; float audio[4096]; size_t audio_count; unsigned sound_commands[3]; int sound_role; unsigned title_ready;
     unsigned queue[42], queue_count, queue_overflow, trace;
     unsigned input_speed,profile,input_timer_live,music_steps,effect_steps;
     unsigned reward_profile,reward_exp,reward_gold,max_skills,free_jobs,free_magic;
@@ -182,11 +182,10 @@ void wiiz_core_delete(WiizCore* core) {
     emulator_delete(core->e);
     free(core);
 }
-void wiiz_core_input(WiizCore* core, unsigned buttons) { core->buttons = buttons;if(buttons)core->roster_editable=0; }
-unsigned wiiz_core_roster_editable(WiizCore* core){return core->roster_editable;}
+void wiiz_core_input(WiizCore* core, unsigned buttons) { core->buttons = buttons; }
 unsigned wiiz_core_title_ready(WiizCore* core) {return core->title_ready;}
 void wiiz_core_reset(WiizCore* core) {
-    core->title_ready=0;core->roster_editable=0;
+    core->title_ready=0;
     core->buttons = 0;core->queue_count=core->queue_overflow=0;core->sound_commands[0]=0;core->input_timer_live=0;
 
     emulator_set_reset(core->e, true);
@@ -734,6 +733,35 @@ static void repair_roster_record(uint8_t* ram,unsigned game,unsigned slot) {
             record[255-i]=(uint8_t)((v<<4)|(v>>4));
         }
     } else memcpy(ram+0x1800+slot*96,record,96);
+}
+
+int wiiz_core_roster_move(WiizCore* core,unsigned from,unsigned to,uint8_t* ram,size_t size) {
+    const unsigned game=core->map_profile;
+    if(!game||from>=20||to>=20||from==to||size!=8192||
+       !wiiz_core_items_pause(core)||!wiiz_core_sram_read(core,ram,size))return 0;
+    const unsigned count=ram[game==1?0x1def:0xb81];
+    if(count>6)return 0;
+    const unsigned stride=game==1?256:96;
+    uint8_t* records=ram+(game==1?0:0x400);
+    if(!records[from*stride])return 0;
+    uint8_t record[256];
+    memcpy(record,records+from*stride,stride);
+    if(from<to)memmove(records+from*stride,records+(from+1)*stride,(to-from)*stride);
+    else memmove(records+(to+1)*stride,records+to*stride,(from-to)*stride);
+    memcpy(records+to*stride,record,stride);
+    // The checks belong to the whole record. I's mirror moves with it.
+    if(game!=1)memcpy(ram+0x1800,records,20*stride);
+
+    // Keep the saved party in the same order with references to the moved records.
+    uint8_t* party=ram+(game==1?0x1ddc:0xb82);
+    const unsigned base=game==1?0x60:0;
+    for(unsigned i=0;i<count;++i) {
+        const unsigned slot=party[i]-base;
+        if(slot==from)party[i]=(uint8_t)(base+to);
+        else if(from<slot&&slot<=to)--party[i];
+        else if(to<=slot&&slot<from)++party[i];
+    }
+    return 1;
 }
 
 static uint8_t* roster_character(WiizCore* core,uint8_t* ram,unsigned slot) {

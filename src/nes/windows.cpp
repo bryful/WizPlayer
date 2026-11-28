@@ -147,7 +147,8 @@ std::vector<uint8_t> restoreRam(WiizCore* core, const fs::path& save) {
 }
 
 void present(HWND window, SDL_Surface* surface, int aspectHeight, const std::vector<std::wstring>& menu,
-             int row, const std::wstring& status,const wchar_t* heading,const std::string& glyphs,int crtMode) {
+             int row, const std::wstring& status,const wchar_t* heading,const std::string& glyphs,int crtMode,
+             const std::array<std::string,20>* rosterNames) {
     RECT client{};
     GetClientRect(window, &client);
     if (client.right <= 0 || client.bottom <= 0) return;
@@ -175,6 +176,20 @@ void present(HWND window, SDL_Surface* surface, int aspectHeight, const std::vec
                 for(unsigned x=0;x<8;++x)
                     if(bits&(0x80u>>x))SetPixelV(buffer,140+static_cast<int>(i)*9+x,65+y,RGB(240,240,240));
             }
+    }
+    if(rosterNames) {
+        const int first=(row/10)*10;
+        for(int i=first;i<first+10;++i) {
+            const auto& name=(*rosterNames)[i];
+            if(!WizardryItemText::raster(name))continue;
+            for(size_t tile=0;tile<(name.size()-5)/16;++tile)
+                for(unsigned y=0;y<8;++y) {
+                    const unsigned bits=WizardryItemText::row(name,tile,y);
+                    for(unsigned x=0;x<8;++x)
+                        if(bits&(0x80u>>x))for(int dy=0;dy<2;++dy)for(int dx=0;dx<2;++dx)
+                            SetPixelV(buffer,104+static_cast<int>(tile)*17+x*2+dx,61+(i-first)*28+y*2+dy,RGB(240,240,240));
+                }
+        }
     }
     if (!status.empty()) {
         RECT bar{12, client.bottom - 40, client.right - 12, client.bottom - 4};
@@ -468,9 +483,13 @@ std::optional<WindowsRom> runConsole(HWND window, const fs::path& rom, std::vect
         }
     };
     applySupport();
-    enum class Page { Main, Support, Characters };
+    enum class Page { Main, Support, Characters, Roster };
     Page page=Page::Main;
     int detailRow=0;
+    int rosterFrom=-1;
+    const int rosterOption=static_cast<int>(options.size());
+    const int supportCount=rosterOption+(wizardry.scenario?1:0);
+    std::array<std::string,20> rosterNames;
     std::vector<std::pair<unsigned,std::string>> roster;
     size_t character=0;
     auto openCharacters=[&] {
@@ -701,16 +720,72 @@ std::optional<WindowsRom> runConsole(HWND window, const fs::path& rom, std::vect
                         else status=L"現在は使用できません";
                     }
                 }
+            } else if(menu&&page==Page::Roster) {
+                if(pressed[Menu]||(pressed[Cancel]&&rosterFrom<0)) {
+                    page=Page::Support;
+                    detailRow=rosterOption;
+                    rosterFrom=-1;
+                    status.clear();
+                    if(pressed[Menu]) {
+                        page=Page::Main;
+                        menu=false;
+                        releaseGame=true;
+                    }
+                } else if(pressed[Cancel]) {
+                    detailRow=rosterFrom;
+                    rosterFrom=-1;
+                } else {
+                    if(pressed[Up])detailRow=std::max(0,detailRow-1);
+                    if(pressed[Down])detailRow=std::min(19,detailRow+1);
+                    if(pressed[Confirm]) {
+                        if(rosterFrom<0) {
+                            if(!rosterNames[detailRow].empty())rosterFrom=detailRow;
+                        } else if(rosterFrom==detailRow)rosterFrom=-1;
+                        else {
+                            std::array<uint8_t,8192> original,updated;
+                            if(!wiiz_core_roster_move(core.get(),rosterFrom,detailRow,updated.data(),updated.size())||
+                               !wiiz_core_sram_read(core.get(),original.data(),original.size()))
+                                throw std::runtime_error("Cannot move roster");
+                            const auto backupDir=directory/L"backups"/save.stem();
+                            fs::create_directories(backupDir);
+                            const auto stamp=std::chrono::system_clock::now().time_since_epoch().count();
+                            write(backupDir/(std::to_wstring(stamp)+L"-before-roster.sav"),original.data(),original.size());
+                            write(save,updated.data(),updated.size());
+                            if(!wiiz_core_sram_write(core.get(),updated.data(),updated.size())) {
+                                write(save,original.data(),original.size());
+                                throw std::runtime_error("Cannot apply roster");
+                            }
+                            turbo->reset(true);
+                            clearAudio();
+                            rosterFrom=-1;
+                            if(wiiz_core_title_ready(core.get()))rosterNames=wizardry.rosterNames(core.get(),bytes);
+                            else {
+                                page=Page::Main;
+                                menu=false;
+                                releaseGame=true;
+                            }
+                        }
+                    }
+                }
             } else if(menu&&page!=Page::Main) {
                 const int direction=static_cast<int>(pressed[Right])-static_cast<int>(pressed[Left]);
-                const int count=page==Page::Support?static_cast<int>(options.size()):5;
+                const int count=page==Page::Support?supportCount:5;
                 if(pressed[Cancel]||pressed[Menu]) {
                     page=Page::Main;
                     status.clear();
                 } else {
                     if(pressed[Up])detailRow=(detailRow+count-1)%count;
                     if(pressed[Down])detailRow=(detailRow+1)%count;
-                    if(page==Page::Support&&(direction||pressed[Confirm])) {
+                    if(page==Page::Support&&detailRow==rosterOption&&pressed[Confirm]) {
+                        wiiz_core_input(core.get(),0);
+                        if(wiiz_core_items_pause(core.get())) {
+                            rosterNames=wizardry.rosterNames(core.get(),bytes);
+                            page=Page::Roster;
+                            detailRow=0;
+                            rosterFrom=-1;
+                            status.clear();
+                        } else status=L"戦闘中やデータ更新中は名簿を並べ替えられません";
+                    } else if(page==Page::Support&&detailRow<rosterOption&&(direction||pressed[Confirm])) {
                         auto& option=options[detailRow];
                         if(option.multiplier) {
                             constexpr std::array<int,7> factors{1,8,16,32,64,128,256};
@@ -770,7 +845,7 @@ std::optional<WindowsRom> runConsole(HWND window, const fs::path& rom, std::vect
                     option = !option;
                 } else if (pressed[Confirm]) {
                     if (row == Save || row == Load) menu = !accessState(selectedSlot, row == Load);
-                    if(row==Support&&!options.empty()) {
+                    if(row==Support&&supportCount) {
                         page=Page::Support;
                         detailRow=0;
                     }
@@ -848,11 +923,12 @@ std::optional<WindowsRom> runConsole(HWND window, const fs::path& rom, std::vect
                 std::wstring(L"X / Y 入れ替え ") + (swapXY ? L"ON" : L"OFF"), L"速度 " + (speedHalf==3?std::wstring(L"1.5"):std::to_wstring(speedHalf/2)) + L"倍",
                 std::wstring(L"ブラウン管  ")+(crtMode==0?L"OFF":crtMode==1?L"弱":L"標準"),L"サポート", L"キャラクター編集", L"リセット", L"ROM選択", L"ゲームに戻る"
             } : std::vector<std::wstring>{};
-            if(menu&&options.empty())lines[Support]+=L"（対象外）";
+            if(menu&&!supportCount)lines[Support]+=L"（対象外）";
             if(menu&&!isWizardry)lines[Characters]+=L"（対象外）";
             const wchar_t* heading=L"機能メニュー";
             int highlight=row;
             std::string characterGlyphs;
+            std::array<std::string,20> rosterPreview;
             if(menu&&page==Page::Support) {
                 heading=L"サポート";
                 highlight=detailRow;
@@ -860,6 +936,20 @@ std::optional<WindowsRom> runConsole(HWND window, const fs::path& rom, std::vect
                 for(const auto& option:options)
                     lines.push_back(std::wstring(option.label)+L"  "+(option.multiplier?
                         L"×"+std::to_wstring(option.value):(option.value?L"ON":L"OFF")));
+                if(wizardry.scenario)lines.push_back(L"名簿の並べ替え");
+            }
+            if(menu&&page==Page::Roster) {
+                heading=L"名簿の並べ替え（確定後はタイトルへ）";
+                highlight=detailRow;
+                lines.clear();
+                rosterPreview=rosterNames;
+                if(rosterFrom>=0&&rosterFrom<detailRow)
+                    std::rotate(rosterPreview.begin()+rosterFrom,rosterPreview.begin()+rosterFrom+1,rosterPreview.begin()+detailRow+1);
+                if(rosterFrom>detailRow)
+                    std::rotate(rosterPreview.begin()+detailRow,rosterPreview.begin()+rosterFrom,rosterPreview.begin()+rosterFrom+1);
+                for(int i=0;i<20;++i)
+                    lines.push_back(std::to_wstring(i+1)+(i==detailRow&&rosterFrom>=0?L"  *":L"")+
+                                    (rosterPreview[i].empty()?L"     空き":L""));
             }
             if(menu&&page==Page::Characters) {
                 heading=L"キャラクター編集";
@@ -883,7 +973,8 @@ std::optional<WindowsRom> runConsole(HWND window, const fs::path& rom, std::vect
                 if(region)caption+=L"-"+std::to_wstring(region);
                 caption+=L"   Q/W・L/R 階層   A 移動   B 戻る";
             }
-            present(window,surface.get(),aspectHeight,lines,highlight,caption,heading,characterGlyphs,overlay==Overlay::Game?crtMode:0);
+            present(window,surface.get(),aspectHeight,lines,highlight,caption,heading,characterGlyphs,
+                overlay==Overlay::Game?crtMode:0,menu&&page==Page::Roster?&rosterPreview:nullptr);
         }
         if (overlay == Overlay::Game && !menu && audio.id &&
             SDL_GetQueuedAudioSize(audio.id) < static_cast<Uint32>(desired.freq * 4 / 10)) {

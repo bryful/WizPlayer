@@ -46,6 +46,9 @@ final class NativeCore {
     static native boolean mixedParty(long core);
     static native int step(long core, int buttons, int[] pixels, short[] audio);
     static native byte[] battery(long core);
+    static native boolean rosterEditable(long core);
+    static native byte[] reorderRoster(long core,int from,int to);
+    static native boolean applyRoster(long core,byte[] data);
     static native byte[] exploration(long core);
     static native void loadExploration(long core,byte[] data);
     static native byte[] state(long core);

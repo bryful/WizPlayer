@@ -63,7 +63,7 @@ public final class MainActivity extends Activity implements Choreographer.FrameC
                 else if(key==10)state(1,false);else if(key==11)state(1,true);else if(key==12)resetGame();else if(key==13)openMap();else if(key==14)openItems();
             }
             public void itemTap(int x,int y){if(itemsOpen)handleItemInput(0,x,y);}
-            public void menuItem(int row,int adjust){if(view.browserItems!=null){view.browserRow=row;activateRom();}else if(view.spellCharacters!=null){view.spellRow=row;selectCharacter();}else{view.menuRow=row;activateMenu(adjust);}}
+            public void menuItem(int row,int adjust){if(view.browserItems!=null){view.browserRow=row;activateRom();}else if(view.rosterNames!=null){view.rosterRow=row;confirmRoster();}else if(view.spellCharacters!=null){view.spellRow=row;selectCharacter();}else{view.menuRow=row;activateMenu(adjust);}}
         });
         int noticeHeight=Math.round(44*getResources().getDisplayMetrics().density);
         FrameLayout.LayoutParams gameParams=new FrameLayout.LayoutParams(-1,-1);
@@ -252,6 +252,8 @@ public final class MainActivity extends Activity implements Choreographer.FrameC
         boolean speedAccepted=NativeCore.setSpeed(next,chosen.speedHalf());
         if(core!=0)NativeCore.close(core);
         core=next;activeRomUri=uri;romName=name;stem=nextStem;sfc=nextSfc;
+        view.rosterSupported=nextNes&&NativeCore.characterEditorSupported(next);
+        view.rosterNames=null;view.rosterFrom=-1;
         savedTurboFile=turboFile;
         applySettings(chosen);
         if(!speedAccepted){
@@ -376,6 +378,7 @@ public final class MainActivity extends Activity implements Choreographer.FrameC
         closeItems();closeMap();
         view.browserItems=null;
         view.spellCharacters=null;
+        view.rosterNames=null;view.rosterFrom=-1;
         view.characterMenu=false;selectedCharacter=-1;
         menuOpen=!menuOpen;view.menu=menuOpen;view.slot=slot;view.swap=swap;view.swapXY=swapXY;view.skipLogo=skipLogo;view.speedHalf=speedHalf;
         view.supportMenu=false;
@@ -384,7 +387,7 @@ public final class MainActivity extends Activity implements Choreographer.FrameC
     private void resetGame(){
         if(core==0)return;
         closeItems();closeMap();
-        try{flush();NativeCore.reset(core);silence();menuOpen=false;view.menu=false;view.browserItems=null;view.spellCharacters=null;view.characterMenu=false;selectedCharacter=-1;view.invalidate();}
+        try{flush();NativeCore.reset(core);silence();menuOpen=false;view.menu=false;view.browserItems=null;view.spellCharacters=null;view.rosterNames=null;view.characterMenu=false;selectedCharacter=-1;view.invalidate();}
         catch(Exception e){message("保存失敗のためリセットを中止しました");}
     }
     private void activateMenu(int adjust){
@@ -424,6 +427,7 @@ public final class MainActivity extends Activity implements Choreographer.FrameC
             }
             else if(row==4&&adjust==0)pickSpellCharacter();
             else if(row==7&&adjust==0)openItems();
+            else if(row==12&&adjust==0&&view.rosterSupported)openRoster();
             else if(row>=8&&row<12&&adjust!=0){
                 int bit=1<<(row-8);
                 int effects=view.effects^bit;
@@ -481,7 +485,7 @@ public final class MainActivity extends Activity implements Choreographer.FrameC
         if(core==0||picking)return;
         if(itemsOpen){closeItems();return;}
         if(!NativeCore.openItems(core)){message("アイテム編集には１人以上のパーティーが必要です（戦闘・データ更新中は不可）");return;}
-        closeMap();view.browserItems=null;view.spellCharacters=null;view.characterMenu=false;view.supportMenu=false;
+        closeMap();view.browserItems=null;view.spellCharacters=null;view.rosterNames=null;view.characterMenu=false;view.supportMenu=false;
         menuOpen=false;view.menu=false;itemsOpen=true;refreshItems();
     }
     private void closeMap(){
@@ -499,7 +503,7 @@ public final class MainActivity extends Activity implements Choreographer.FrameC
         if(core==0||picking)return;
         if(mapOpen){closeMap();return;}
         if(!NativeCore.openMap(core)){message("現在の状態ではマップを表示できません");return;}
-        menuOpen=false;view.menu=false;view.spellCharacters=null;view.characterMenu=false;view.browserItems=null;
+        menuOpen=false;view.menu=false;view.spellCharacters=null;view.rosterNames=null;view.characterMenu=false;view.browserItems=null;
         mapOpen=true;silence();refreshMap();
 
     }
@@ -521,6 +525,16 @@ public final class MainActivity extends Activity implements Choreographer.FrameC
                 }
             }catch(Exception e){message("移動を中止しました: "+e.getMessage());}
             mapOpen=NativeCore.mapIsOpen(core);refreshMap();silence();return;
+        }
+        if(view.rosterNames!=null){
+            if((bit&64)!=0)view.rosterRow=Math.max(0,view.rosterRow-1);
+            else if((bit&128)!=0)view.rosterRow=Math.min(view.rosterNames.length-1,view.rosterRow+1);
+            else if((bit&1)!=0)confirmRoster();
+            else if((bit&2)!=0){
+                if(view.rosterFrom>=0){view.rosterRow=view.rosterFrom;view.rosterFrom=-1;}
+                else view.rosterNames=null;
+            }
+            view.invalidate();return;
         }
         if(view.spellCharacters!=null){
             int count=view.spellCharacters.length;
@@ -545,6 +559,42 @@ public final class MainActivity extends Activity implements Choreographer.FrameC
         else if((bit&128)!=0)view.menuRow=(view.menuRow+1)%rows;
         else if((bit&16)!=0)activateMenu(1);else if((bit&32)!=0)activateMenu(-1);
         else if((bit&1)!=0)activateMenu(0);else if((bit&2)!=0){if(view.supportMenu){view.supportMenu=false;view.menuRow=9;}else menu();}
+        view.invalidate();
+    }
+    private void openRoster(){
+        if(!NativeCore.rosterEditable(core)){
+            message("戦闘中やデータ更新中は名簿を並べ替えられません");
+            return;
+        }
+        view.rosterNames=NativeCore.spellNames(core);
+        view.rosterRow=0;view.rosterFrom=-1;
+    }
+    private void confirmRoster(){
+        int to=view.rosterRow,from=view.rosterFrom;
+        if(from<0){
+            if(view.rosterNames[to]!=null)view.rosterFrom=to;
+        }else if(from==to)view.rosterFrom=-1;
+        else {
+            try {
+                byte[] updated=NativeCore.reorderRoster(core,from,to);
+                if(updated==null)throw new IOException("現在の名簿は移動できません");
+                byte[] original=NativeCore.battery(core);
+                saveQueue.flush();
+                store.write(stem+".before-roster-"+System.currentTimeMillis()+".sav",original);
+                store.write(stem+".sav",updated);
+                if(!NativeCore.applyRoster(core,updated)){
+                    store.write(stem+".sav",original);
+                    throw new IOException("名簿を反映できません");
+                }
+                silence();
+                String moved=view.rosterNames[from];
+                if(from<to)System.arraycopy(view.rosterNames,from+1,view.rosterNames,from,to-from);
+                else System.arraycopy(view.rosterNames,to,view.rosterNames,to+1,from-to);
+                view.rosterNames[to]=moved;
+                view.rosterFrom=-1;
+                if(!NativeCore.rosterEditable(core))menu();
+            }catch(Exception e){message("名簿の並べ替えに失敗しました: "+e.getMessage());}
+        }
         view.invalidate();
     }
     private void pickSpellCharacter(){
@@ -622,6 +672,7 @@ public final class MainActivity extends Activity implements Choreographer.FrameC
     }
     private boolean state(int number,boolean load) {
         if(core==0||store==null||itemsOpen||mapOpen)return false;
+        if(load&&view.rosterNames!=null){view.rosterNames=null;view.rosterFrom=-1;view.menuRow=12;}
         if(load&&(view.spellCharacters!=null||view.characterMenu)){view.spellCharacters=null;view.characterMenu=false;selectedCharacter=-1;view.menuRow=4;}
         try {
             String path=stem+".slot"+number+".state";
